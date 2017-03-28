@@ -21,24 +21,7 @@
  */
 package org.wildfly.core.test.standalone.mgmt.events;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.jboss.as.controller.client.helpers.ClientConstants.SUBSYSTEM;
-import static org.junit.Assert.fail;
-import static org.wildfly.extension.core.management.client.Process.RunningMode.ADMIN_ONLY;
-import static org.wildfly.extension.core.management.client.Process.RunningMode.NORMAL;
-import static org.wildfly.extension.core.management.client.Process.Type.STANDALONE_SERVER;
-
-import java.io.File;
-import java.io.IOException;
-import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Properties;
-import javax.inject.Inject;
-
+import org.apache.commons.io.FileUtils;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.client.helpers.ClientConstants;
 import org.jboss.as.controller.client.helpers.Operations;
@@ -61,6 +44,24 @@ import org.wildfly.core.testrunner.UnsuccessfulOperationException;
 import org.wildfly.core.testrunner.WildflyTestRunner;
 import org.wildfly.extension.core.management.client.Process;
 import org.wildfly.test.events.provider.TestListener;
+
+import javax.inject.Inject;
+import java.io.File;
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Properties;
+
+import static org.hamcrest.CoreMatchers.is;
+import static org.jboss.as.controller.client.helpers.ClientConstants.SUBSYSTEM;
+import static org.junit.Assert.fail;
+import static org.wildfly.extension.core.management.client.Process.RunningMode.ADMIN_ONLY;
+import static org.wildfly.extension.core.management.client.Process.RunningMode.NORMAL;
+import static org.wildfly.extension.core.management.client.Process.Type.STANDALONE_SERVER;
 
 /**
  * @author <a href="http://jmesnil.net/">Jeff Mesnil</a> (c) 2016 Red Hat inc.
@@ -163,164 +164,222 @@ public class ProcessStateListenerTestCase extends AbstractLoggingTestCase {
 
     @Test
     public void testListenerStartInAdminOnly() throws Exception {
-        try {
-            controller.startInAdminMode();
-
-            // try to add new listener with non-existing module
+        int i = 1;
+        while (i > 0) {
+            clearNotificationFiles();
+            saySomething("Iteration: " + i++);
             try {
-                addListener(WRONG_MODULE_LISTENER_ADDRESS, "non.existing.module", null, null);
-                fail("Command should fail");
-            } catch (UnsuccessfulOperationException uoe) {
-                // expected
+                controller.startInAdminMode();
+
+                // try to add new listener with non-existing module
+                try {
+                    addListener(WRONG_MODULE_LISTENER_ADDRESS, "non.existing.module", null, null);
+                    fail("Command should fail");
+                } catch (UnsuccessfulOperationException uoe) {
+                    // expected
+                }
+
+                // add listener where both *stateChanged methods throws exception
+                Properties p = new Properties();
+                p.setProperty(TestListener.FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED, "true");
+                p.setProperty(TestListener.FAIL_RUNNING_STATE_CHANGED, "true");
+                addListener(FAIL_STATE_CHANGED_MODULE_LISTENER_ADDRESS, TestListener.class.getPackage().getName(), p, null);
+
+                controller.stop();
+                controller.startInAdminMode();
+
+                // remove listener where both *stateChanged methods throws exception
+                controller.getClient().executeForResult(Util.createRemoveOperation(FAIL_STATE_CHANGED_MODULE_LISTENER_ADDRESS));
+
+                // check log for NPE introduced by listener where both *stateChanged methods throws exception
+                assertLogContains("java.lang.NullPointerException: " + TestListener.FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED);
+                assertLogContains("java.lang.NullPointerException: " + TestListener.FAIL_RUNNING_STATE_CHANGED);
+
+                controller.reload(true, 30 * 1000);
+                controller.reload();
+                controller.reload(true, 30 * 1000);
+            } finally {
+                controller.stop();
             }
 
-            // add listener where both *stateChanged methods throws exception
-            Properties p = new Properties();
-            p.setProperty(TestListener.FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED, "true");
-            p.setProperty(TestListener.FAIL_RUNNING_STATE_CHANGED, "true");
-            addListener(FAIL_STATE_CHANGED_MODULE_LISTENER_ADDRESS, TestListener.class.getPackage().getName(), p, null);
+            RuntimeConfigurationStateChanges runtimeConfigChanges = new RuntimeConfigurationStateChanges(runtimeConfigurationStateChangeFile);
+            // start to admin_only
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // stop
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            // start to admin_only
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // reload to admin only
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // reload to normal mode
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // reload to admin only
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // stop
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.verify();
 
-            controller.stop();
-            controller.startInAdminMode();
+            RunningStateChanges runningStateChanges = new RunningStateChanges(runningStateChangeFile);
+            // start to admin_only
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
+            // stop
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.SUSPENDING);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
+            // start to admin_only
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
+            // reload to admin only
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.STOPPING);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
+            // reload to normal mode
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.STOPPING);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
+            // reload to admin only
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.STOPPING);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
+            // stop
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.SUSPENDING);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
 
-            // remove listener where both *stateChanged methods throws exception
-            controller.getClient().executeForResult(Util.createRemoveOperation(FAIL_STATE_CHANGED_MODULE_LISTENER_ADDRESS));
-
-            // check log for NPE introduced by listener where both *stateChanged methods throws exception
-            assertLogContains("java.lang.NullPointerException: " + TestListener.FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED);
-            assertLogContains("java.lang.NullPointerException: " + TestListener.FAIL_RUNNING_STATE_CHANGED);
-
-            controller.reload(true, 30 * 1000);
-            controller.reload();
-            controller.reload(true, 30 * 1000);
-        } finally {
-            controller.stop();
+            /* Expected runningStateChanges content
+STANDALONE_SERVER admin-only starting suspended
+STANDALONE_SERVER admin-only suspended admin-only
+STANDALONE_SERVER admin-only admin-only suspending
+STANDALONE_SERVER admin-only suspending suspended
+STANDALONE_SERVER admin-only suspended stopping
+STANDALONE_SERVER admin-only starting suspended
+STANDALONE_SERVER admin-only suspended admin-only
+STANDALONE_SERVER admin-only admin-only stopping
+STANDALONE_SERVER admin-only starting suspended
+STANDALONE_SERVER admin-only suspended admin-only
+STANDALONE_SERVER admin-only admin-only stopping
+STANDALONE_SERVER normal starting suspended
+STANDALONE_SERVER normal suspended normal
+STANDALONE_SERVER normal normal stopping
+STANDALONE_SERVER admin-only starting suspended
+STANDALONE_SERVER admin-only suspended admin-only
+STANDALONE_SERVER admin-only admin-only suspending
+STANDALONE_SERVER admin-only suspending suspended
+STANDALONE_SERVER admin-only suspended stopping
+             */
+            runningStateChanges.verify();
         }
-
-        RuntimeConfigurationStateChanges runtimeConfigChanges = new RuntimeConfigurationStateChanges(runtimeConfigurationStateChangeFile);
-        // start to admin_only
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // stop
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        // start to admin_only
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // reload to admin only
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // reload to normal mode
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // reload to admin only
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // stop
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.verify();
-
-        RunningStateChanges runningStateChanges = new RunningStateChanges(runningStateChangeFile);
-        // start to admin_only
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
-        // stop
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.SUSPENDING);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
-        // start to admin_only
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
-        // reload to admin only
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.STOPPING);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
-        // reload to normal mode
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.STOPPING);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
-        // reload to admin only
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.STOPPING);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
-        // stop
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.SUSPENDING);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
-        runningStateChanges.verify();
     }
 
     @Test
     public void testListenerStartInNormal() throws Exception {
-        try {
-            controller.start();
-            controller.stop();
-            controller.start();
-            controller.reload(true, 30 * 1000);
-            controller.reload();
-            suspendServer();
-            resumeServer();
-            forceReloadRequired();
-            controller.reload();
-            forceRestartRequired();
-        } finally {
-            controller.stop();
+        int i = 1;
+        while (i > 0) {
+            clearNotificationFiles();
+            saySomething("Iteration: " + i++);
+            try {
+                controller.start();
+                controller.stop();
+                controller.start();
+                controller.reload(true, 30 * 1000);
+                controller.reload();
+                suspendServer();
+                resumeServer();
+                forceReloadRequired();
+                controller.reload();
+                forceRestartRequired();
+            } finally {
+                controller.stop();
+            }
+
+            RuntimeConfigurationStateChanges runtimeConfigChanges = new RuntimeConfigurationStateChanges(runtimeConfigurationStateChangeFile);
+            // start to normal
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // stop
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            // start to normal
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // reload to admin only
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // reload to normal mode
+            runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // force reload-required
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.RELOAD_REQUIRED);
+            // reload to normal mode
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RELOAD_REQUIRED, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
+            // force restart-required
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.RESTART_REQUIRED);
+            // stop
+            runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RESTART_REQUIRED, Process.RuntimeConfigurationState.STOPPING);
+            runtimeConfigChanges.verify();
+
+            RunningStateChanges runningStateChanges = new RunningStateChanges(runningStateChangeFile);
+            // start to normal
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
+            // stop
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.SUSPENDING);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
+            // start to normal
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
+            // reload to admin only
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.STOPPING);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
+            // reload to normal mode
+            runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.STOPPING);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
+            // suspend
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.SUSPENDING);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
+            // resume
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
+            // reload to normal mode after reload-required
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.STOPPING);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
+            // stop
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.SUSPENDING);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
+            runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
+
+            /* Expected
+STANDALONE_SERVER normal starting suspended
+STANDALONE_SERVER normal suspended normal
+STANDALONE_SERVER normal normal suspending
+STANDALONE_SERVER normal suspending suspended
+STANDALONE_SERVER normal suspended stopping
+STANDALONE_SERVER normal starting suspended
+STANDALONE_SERVER normal suspended normal
+STANDALONE_SERVER normal normal stopping
+STANDALONE_SERVER admin-only starting suspended
+STANDALONE_SERVER admin-only suspended admin-only
+STANDALONE_SERVER admin-only admin-only stopping
+STANDALONE_SERVER normal starting suspended
+STANDALONE_SERVER normal suspended normal
+STANDALONE_SERVER normal normal suspending
+STANDALONE_SERVER normal suspending suspended
+STANDALONE_SERVER normal suspended normal
+STANDALONE_SERVER normal normal stopping
+STANDALONE_SERVER normal starting suspended
+STANDALONE_SERVER normal suspended normal
+STANDALONE_SERVER normal normal suspending
+STANDALONE_SERVER normal suspending suspended
+STANDALONE_SERVER normal suspended stopping
+             */
+
+            runningStateChanges.verify();
         }
-
-        RuntimeConfigurationStateChanges runtimeConfigChanges = new RuntimeConfigurationStateChanges(runtimeConfigurationStateChangeFile);
-        // start to normal
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // stop
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        // start to normal
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // reload to admin only
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // reload to normal mode
-        runtimeConfigChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // force reload-required
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.RELOAD_REQUIRED);
-        // reload to normal mode
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RELOAD_REQUIRED, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.STARTING, Process.RuntimeConfigurationState.RUNNING);
-        // force restart-required
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RUNNING, Process.RuntimeConfigurationState.RESTART_REQUIRED);
-        // stop
-        runtimeConfigChanges.add(STANDALONE_SERVER, NORMAL, Process.RuntimeConfigurationState.RESTART_REQUIRED, Process.RuntimeConfigurationState.STOPPING);
-        runtimeConfigChanges.verify();
-
-        RunningStateChanges runningStateChanges = new RunningStateChanges(runningStateChangeFile);
-        // start to normal
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
-        // stop
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.SUSPENDING);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
-        // start to normal
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
-        // reload to admin only
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.STOPPING);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.SUSPENDED, Process.RunningState.ADMIN_ONLY);
-        // reload to normal mode
-        runningStateChanges.add(STANDALONE_SERVER, ADMIN_ONLY, Process.RunningState.ADMIN_ONLY, Process.RunningState.STOPPING);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
-        // suspend
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.SUSPENDING);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
-        // resume
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
-        // reload to normal mode after reload-required
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.STOPPING);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.STARTING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.NORMAL);
-        // stop
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.NORMAL, Process.RunningState.SUSPENDING);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDING, Process.RunningState.SUSPENDED);
-        runningStateChanges.add(STANDALONE_SERVER, NORMAL, Process.RunningState.SUSPENDED, Process.RunningState.STOPPING);
-        runningStateChanges.verify();
     }
 
     @Test
@@ -451,9 +510,23 @@ public class ProcessStateListenerTestCase extends AbstractLoggingTestCase {
 
         public void verify() throws IOException {
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            //MatcherAssert.assertThat(lines, Is.is(changes));
-            for(int i = 0; i <lines.size(); i++) {
-                Assert.assertThat("Incorrect match at line " + i, lines.get(i), is(changes.get(i)));
+            System.out.println("Expected changes");
+            changes.forEach(System.out::println);
+            System.out.println();
+
+            System.out.println("Files.readAllLines");
+            lines.forEach(System.out::println);
+            System.out.println();
+
+            String fileContent = FileUtils.readFileToString(file.toFile(), StandardCharsets.UTF_8);
+            System.out.println("FileUtils.readFileToString");
+            System.out.println(fileContent);
+            System.out.println();
+
+            for (int i = 0; i < lines.size(); i++) {
+                Assert.assertThat(System.lineSeparator() + fileContent + System.lineSeparator() +
+                                "Incorrect match at line " + i,
+                        lines.get(i), is(changes.get(i)));
             }
         }
     }
@@ -465,7 +538,7 @@ public class ProcessStateListenerTestCase extends AbstractLoggingTestCase {
         }
 
         public void add(Process.Type processType, Process.RunningMode runningMode,
-                Process.RunningState oldState, Process.RunningState newState) {
+                        Process.RunningState oldState, Process.RunningState newState) {
             changes.add(processType + " " + runningMode + " " + oldState + " " + newState);
         }
     }
@@ -477,9 +550,16 @@ public class ProcessStateListenerTestCase extends AbstractLoggingTestCase {
         }
 
         public void add(Process.Type processType, Process.RunningMode runningMode,
-                Process.RuntimeConfigurationState oldState, Process.RuntimeConfigurationState newState) {
+                        Process.RuntimeConfigurationState oldState, Process.RuntimeConfigurationState newState) {
             changes.add(processType + " " + runningMode + " " + oldState + " " + newState);
         }
     }
 
+    private void saySomething(String something) {
+        System.out.println();
+        System.out.println("XXXXXXXXXXXXXXXXXXXXXXXXXX");
+        System.out.println(something);
+        System.out.println("XXX");
+        System.out.println();
+    }
 }
