@@ -22,16 +22,16 @@
 
 package org.wildfly.test.events.provider;
 
+import org.wildfly.extension.core.management.client.ProcessStateListener;
+import org.wildfly.extension.core.management.client.ProcessStateListenerInitParameters;
+import org.wildfly.extension.core.management.client.RunningStateChangeEvent;
+import org.wildfly.extension.core.management.client.RuntimeConfigurationStateChangeEvent;
+
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-
-import org.wildfly.extension.core.management.client.ProcessStateListener;
-import org.wildfly.extension.core.management.client.ProcessStateListenerInitParameters;
-import org.wildfly.extension.core.management.client.RunningStateChangeEvent;
-import org.wildfly.extension.core.management.client.RuntimeConfigurationStateChangeEvent;
 
 /**
  * @author <a href="http://jmesnil.net/">Jeff Mesnil</a> (c) 2016 Red Hat inc.
@@ -50,6 +50,7 @@ public class TestListener implements ProcessStateListener {
 
     public static final String RUNTIME_CONFIGURATION_STATE_CHANGE_FILENAME = "runtimeConfigurationState.txt";
     public static final String RUNNING_STATE_CHANGE_FILENAME = "runningState.txt";
+    private static int i = 0;
 
     private File fileRuntime;
     private File fileRunning;
@@ -106,16 +107,16 @@ public class TestListener implements ProcessStateListener {
         if (parameters.getInitProperties().containsKey(FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED)) {
             throw new NullPointerException(FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED);
         }
-        try {
-            if (parameters.getInitProperties().containsKey(TIMEOUT)) {
+
+        if (parameters.getInitProperties().containsKey(TIMEOUT)) {
+            try {
                 long timeout = Long.parseLong(parameters.getInitProperties().get(TIMEOUT));
                 Thread.sleep(timeout);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
-            fileRuntimeWriter.write(String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState()));
-            fileRuntimeWriter.flush();
-        } catch (IOException | InterruptedException e) {
-            e.printStackTrace();
         }
+        writeToFile(fileRuntimeWriter, String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState()));
     }
 
     @Override
@@ -123,10 +124,15 @@ public class TestListener implements ProcessStateListener {
         if (parameters.getInitProperties().containsKey(FAIL_RUNNING_STATE_CHANGED)) {
             throw new NullPointerException(FAIL_RUNNING_STATE_CHANGED);
         }
+        writeToFile(fileRunningWriter, String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState()));
+    }
+
+    private synchronized void writeToFile(FileWriter writer, String str) {
         try {
-            fileRunningWriter.write(String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState()));
-            fileRunningWriter.flush();
+            writer.write(str);
+            writer.flush();
         } catch (IOException e) {
+            System.err.println(e.getCause());
             e.printStackTrace();
         }
     }
