@@ -30,6 +30,7 @@ import org.wildfly.extension.core.management.client.RuntimeConfigurationStateCha
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -104,6 +105,8 @@ public class TestListener implements ProcessStateListener {
 
     @Override
     public void runtimeConfigurationStateChanged(RuntimeConfigurationStateChangeEvent evt) {
+        String event = String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState());
+        System.out.println("runtimeConfigurationStateChanged() " + event);
         if (parameters.getInitProperties().containsKey(FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED)) {
             throw new NullPointerException(FAIL_RUNTIME_CONFIGURATION_STATE_CHANGED);
         }
@@ -113,26 +116,32 @@ public class TestListener implements ProcessStateListener {
                 long timeout = Long.parseLong(parameters.getInitProperties().get(TIMEOUT));
                 Thread.sleep(timeout);
             } catch (InterruptedException e) {
+                System.out.println("XXXXXXXXXXXXXXXXXXXXXXX jsi to ty???");
                 e.printStackTrace();
             }
         }
-        writeToFile(fileRuntimeWriter, String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState()));
+        writeToFile(fileRuntimeWriter, event);
     }
 
     @Override
     public void runningStateChanged(RunningStateChangeEvent evt) {
+        String event = String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState());
+        System.out.println("runningStateChanged()" + event);
         if (parameters.getInitProperties().containsKey(FAIL_RUNNING_STATE_CHANGED)) {
             throw new NullPointerException(FAIL_RUNNING_STATE_CHANGED);
         }
-        writeToFile(fileRunningWriter, String.format("%s %s %s %s\n", parameters.getProcessType(), parameters.getRunningMode(), evt.getOldState(), evt.getNewState()));
+        writeToFile(fileRunningWriter, event);
     }
 
     private synchronized void writeToFile(FileWriter writer, String str) {
+        System.out.println("Writing to file: " + System.lineSeparator() + str);
         try {
             writer.write(str);
             writer.flush();
+        } catch (ClosedByInterruptException cbie) {
+            System.out.println("Was interrupted? " + Thread.interrupted());
         } catch (IOException e) {
-            System.err.println(e.getCause());
+            System.out.println(e.getCause());
             e.printStackTrace();
         }
     }
