@@ -15,13 +15,6 @@
  */
 package org.jboss.as.test.manualmode.auditlog;
 
-import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.CLIENT_CERT_STORE;
-import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.TRUSTSTORE;
-import static org.jboss.as.test.manualmode.auditlog.AbstractLogFieldsOfLogTestCase.executeForSuccess;
-
-import java.io.IOException;
-import java.util.concurrent.BlockingQueue;
-import javax.inject.Inject;
 import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.client.ModelControllerClient;
 import org.jboss.as.controller.client.helpers.Operations;
@@ -36,7 +29,9 @@ import org.jboss.dmr.ModelNode;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
 import org.productivity.java.syslog4j.server.SyslogServerEventIF;
 import org.wildfly.core.testrunner.ServerControl;
@@ -44,8 +39,15 @@ import org.wildfly.core.testrunner.ServerController;
 import org.wildfly.core.testrunner.WildflyTestRunner;
 import org.xnio.IoUtils;
 
+import javax.inject.Inject;
+import java.io.IOException;
+import java.util.concurrent.BlockingQueue;
+
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.CLIENT_CERT_STORE;
+import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.TRUSTSTORE;
+import static org.jboss.as.test.manualmode.auditlog.AbstractLogFieldsOfLogTestCase.executeForSuccess;
+
 /**
- *
  * @author Emmanuel Hugonnet (c) 2017 Red Hat, inc.
  */
 @RunWith(WildflyTestRunner.class)
@@ -59,6 +61,8 @@ public class AuditLogBootingSyslogTest {
     private static final String DEFAULT_USER_KEY = "wildfly.sasl.local-user.default-user";
     private static final AuditLogToTLSElytronSyslogSetup SYSLOG_SETUP = new AuditLogToTLSElytronSyslogSetup();
 
+    @Rule
+    public TestName name = new TestName();
 
     @Inject
     private ServerController container;
@@ -114,16 +118,16 @@ public class AuditLogBootingSyslogTest {
 
     /**
      * Test the Syslog audit events emitted during a server boot.
-     *
+     * <p>
      * During the server boot there are two key audit events to be recorded.
      * <ol>
      * <li>Adding of extensions.
      * <li>Composite operation of initial configuration.
      * </ol>
-     *
+     * <p>
      * The event to add the extensions fits into a single syslog event. The composite operation is chopped to fit into multiple
      * events, at the time of writing it is split across 17 events.
-     *
+     * <p>
      * Small differences between the expected count and actual count could be caused by configuration changes changing how many
      * events it takes to hold the entire composite operation.
      */
@@ -147,7 +151,19 @@ public class AuditLogBootingSyslogTest {
             }
             Thread.sleep(100);
         } while (System.currentTimeMillis() < endTime);
-        Assert.assertEquals(expectedSize, queue.size());
+        int actualSize = queue.size();
+
+        System.out.println("#####     waitForExpectedQueueSize()     #####");
+        System.out.println(name.getMethodName() + "()");
+        System.out.println("actualSize: " + actualSize);
+        int i = 1;
+        while (queue.size() > 0) {
+            System.out.println("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+            System.out.println(i++ + ".)");
+            System.out.println(queue.take().toString());
+            System.out.println();
+        }
+        Assert.assertEquals(expectedSize, actualSize);
     }
 
     private boolean makeOneLog() throws IOException {
