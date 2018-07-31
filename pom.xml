@@ -1575,7 +1575,8 @@
             </activation>
             <properties>
                 <modular.jdk.args>--add-exports=java.base/sun.nio.ch=ALL-UNNAMED
-                    --illegal-access=permit</modular.jdk.args>
+			--illegal-access=permit
+			--add-modules java.se</modular.jdk.args>
                 <!-- [WFCORE-1494] remove JUL workaround -->
                 <modular.jdk.props>-Dsun.util.logging.disableCallerCheck=true -Djdk.attach.allowAttachSelf=true</modular.jdk.props>
                 <version.org.jboss.byteman>4.0.0-BETA5</version.org.jboss.byteman>
